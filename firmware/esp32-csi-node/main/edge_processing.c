@@ -831,18 +831,30 @@ static void edge_task(void *arg)
 
     edge_ring_slot_t slot;
 
+    /* Maximum frames to process before a longer yield.  On busy LANs
+     * (corporate networks, many APs), the ring buffer fills continuously.
+     * Without a batch limit the task processes frames back-to-back with
+     * only 1-tick yields, which on high frame rates can still starve
+     * IDLE1 enough to trip the 5-second task watchdog.  See #266, #321. */
+    const uint8_t BATCH_LIMIT = 4;
+
     while (1) {
-        if (ring_pop(&slot)) {
+        uint8_t processed = 0;
+
+        while (processed < BATCH_LIMIT && ring_pop(&slot)) {
             process_frame(&slot);
-            /* Yield after every frame to feed the Core 1 watchdog.
-             * process_frame() is CPU-intensive (biquad filters, Welford stats,
-             * BPM estimation, multi-person vitals) and can take several ms.
-             * Without this yield, edge_dsp at priority 5 starves IDLE1 at
-             * priority 0, triggering the task watchdog. See issue #266. */
+            processed++;
+            /* 1-tick yield between frames within a batch. */
             vTaskDelay(1);
+        }
+
+        if (processed > 0) {
+            /* Longer yield after each batch so IDLE1 can run and feed
+             * the Core 1 watchdog even under sustained load. */
+            vTaskDelay(pdMS_TO_TICKS(10));
         } else {
             /* No frames available — yield briefly. */
-            vTaskDelay(pdMS_TO_TICKS(1));
+            vTaskDelay(pdMS_TO_TICKS(5));
         }
     }
 }

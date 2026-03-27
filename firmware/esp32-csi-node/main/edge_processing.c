@@ -41,12 +41,14 @@ static const char *TAG = "edge_proc";
  * ====================================================================== */
 
 static edge_ring_buf_t s_ring;
+static uint32_t s_ring_drops;  /* Frames dropped due to full ring buffer. */
 
 static inline bool ring_push(const uint8_t *iq, uint16_t len,
                              int8_t rssi, uint8_t channel)
 {
     uint32_t next = (s_ring.head + 1) % EDGE_RING_SLOTS;
     if (next == s_ring.tail) {
+        s_ring_drops++;
         return false;  /* Full — drop frame. */
     }
 
@@ -788,12 +790,13 @@ static void process_frame(const edge_ring_slot_t *slot)
 
         if ((s_frame_count % 200) == 0) {
             ESP_LOGI(TAG, "Vitals: br=%.1f hr=%.1f motion=%.4f pres=%s "
-                     "fall=%s persons=%u frames=%lu",
+                     "fall=%s persons=%u frames=%lu drops=%lu",
                      s_breathing_bpm, s_heartrate_bpm, s_motion_energy,
                      s_presence_detected ? "YES" : "no",
                      s_fall_detected ? "YES" : "no",
                      (unsigned)s_latest_pkt.n_persons,
-                     (unsigned long)s_frame_count);
+                     (unsigned long)s_frame_count,
+                     (unsigned long)s_ring_drops);
         }
     }
 
@@ -849,12 +852,14 @@ static void edge_task(void *arg)
         }
 
         if (processed > 0) {
-            /* Longer yield after each batch so IDLE1 can run and feed
-             * the Core 1 watchdog even under sustained load. */
-            vTaskDelay(pdMS_TO_TICKS(10));
+            /* Post-batch yield: 2 ticks (~20 ms at 100 Hz) so IDLE1 can
+             * run and feed the Core 1 watchdog even under sustained load.
+             * This is intentionally longer than the 1-tick inter-frame yield. */
+            vTaskDelay(2);
         } else {
-            /* No frames available — yield briefly. */
-            vTaskDelay(pdMS_TO_TICKS(5));
+            /* No frames available — sleep one full tick.
+             * NOTE: pdMS_TO_TICKS(5) == 0 at 100 Hz, which would busy-spin. */
+            vTaskDelay(1);
         }
     }
 }

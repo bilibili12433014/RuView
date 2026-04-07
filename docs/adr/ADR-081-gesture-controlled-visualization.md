@@ -245,40 +245,136 @@ Rules:
 | Circular CCW | Set low alert threshold | Continuous |
 | Thumb up | Acknowledge alert | Binary |
 
-### Visual Feedback
+### Visual Feedback: AR Camera Overlay
 
-The UI provides real-time feedback so users know the system is tracking them:
+The primary view is the **live camera feed with AR overlays** — the person is visible
+with charts, skeleton, and data rendered on top. This creates a "Minority Report" style
+interface where you see yourself manipulating data in real-time.
 
 ```
-┌────────────────────────────────────────────────┐
-│                                                │
-│   ┌──────────────────────────────────────┐     │
-│   │                                      │     │
-│   │        Chart (D3.js)                 │     │
-│   │                                      │     │
-│   │         ◉ ← gesture cursor           │     │
-│   │                                      │     │
-│   └──────────────────────────────────────┘     │
-│                                                │
-│   ┌──────────────────────────────────────┐     │
-│   │ 🖐 Tracking  │ ← Swipe Right │ 0.87 │     │
-│   └──────────────────────────────────────┘     │
-│   Gesture bar: state | detected gesture | conf │
-│                                                │
-│   ┌────┐ ┌────┐ ┌────┐ ┌────┐                 │
-│   │ CSI│ │ CAM│ │ FPS│ │MODE│                  │
-│   │ ●  │ │ ●  │ │ 28 │ │FUSE│                  │
-│   └────┘ └────┘ └────┘ └────┘                  │
-│   Status: sensor health, framerate, mode        │
-└────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│  ╔══════════════════════════════════════════════════════════╗ │
+│  ║                                                          ║ │
+│  ║     [Live Camera Feed — person visible]                  ║ │
+│  ║                                                          ║ │
+│  ║          ╭─────╮                                         ║ │
+│  ║          │     │  ← skeleton overlay (17 keypoints)      ║ │
+│  ║          ╰──┬──╯                                         ║ │
+│  ║           ╱   ╲                                          ║ │
+│  ║          ╱     ╲    ┌──────────────────────┐             ║ │
+│  ║         │       │   │  CSI Amplitude Chart │             ║ │
+│  ║         │  🖐→   │   │  ┌─╮ ╭─╮   ╭──╮     │             ║ │
+│  ║         │       │   │  │ ╰─╯ ╰───╯  │     │             ║ │
+│  ║          ╲     ╱    │  │             │     │             ║ │
+│  ║           ╲   ╱     └──────────────────────┘             ║ │
+│  ║            │ │      ↑ chart follows hand position        ║ │
+│  ║           ╱   ╲                                          ║ │
+│  ║          ╱     ╲                                         ║ │
+│  ║                                                          ║ │
+│  ╚══════════════════════════════════════════════════════════╝ │
+│                                                              │
+│  ┌──────────────────────────────────────────────────────────┐ │
+│  │                    LOWER THIRD                            │ │
+│  │  ┌────┐                                                  │ │
+│  │  │ pi │  RuView Sensing   HR: 72 BPM   BR: 16 BPM      │ │
+│  │  │    │  v0.7.0           Presence: 1   Motion: 0.23    │ │
+│  │  └────┘                                                  │ │
+│  │  [logo]  [gesture: Swipe Right]  [CSI ●] [CAM ●] [28fps]│ │
+│  └──────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────┘
+```
+
+#### AR Overlay Layers (bottom to top)
+
+| Layer | Content | Opacity | Update Rate |
+|-------|---------|---------|-------------|
+| 0 | Live camera feed (full frame) | 100% | 30fps |
+| 1 | Skeleton overlay (17 keypoints + bones) | 70% | 30fps |
+| 2 | Gesture cursor (hand position + state) | 90% | 30fps |
+| 3 | Floating chart (anchored to hand/body region) | 85% | 30fps |
+| 4 | Data labels + tooltips | 95% | On gesture |
+| 5 | Lower third (RuView branding + vitals + status) | 95% | 1fps |
+
+#### Floating Chart Placement
+
+Charts are **anchored to the person's body** and follow movement:
+
+```
+Placement rules:
+  - Default: chart floats to the right of the person's dominant hand
+  - If hand moves left: chart slides to left side
+  - Chart stays within frame bounds (never clips off-screen)
+  - Multiple charts: stack vertically with 10% gap
+  - Inactive charts: shrink to thumbnail and anchor near shoulder
+
+Chart anchor point = wrist_position + offset(0.15, -0.1)  // right and slightly above hand
+Chart size: 30% of frame width × 20% of frame height
+```
+
+#### Lower Third Design
+
+The lower third bar provides persistent status in broadcast-style framing:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  ┌──────┐                                                    │
+│  │  pi  │   RuView Sensing v0.7.0                            │
+│  │      │   ──────────────────────────────────────────────   │
+│  │ logo │   HR: 72 BPM  |  BR: 16 BPM  |  Persons: 1       │
+│  └──────┘   Motion: Low  |  Gesture: Swipe Right  |  28fps  │
+│             [CSI ●] [CAM ●] [FUSE]          PCK@20: 92.9%   │
+└──────────────────────────────────────────────────────────────┘
+
+Design:
+  - Background: semi-transparent dark (#1a1a2e, 80% opacity)
+  - Logo: RuView "pi" icon (32x32px), left-aligned
+  - Text: white (#ffffff) primary, gray (#a0a0a0) secondary
+  - Accent: teal (#00d4aa) for active indicators
+  - Height: 15% of frame
+  - Font: system monospace for data, sans-serif for labels
+  - Divider: thin teal line separating logo from data
+```
+
+#### RuView Logo Placement
+
+```
+The "pi" logo appears in two contexts:
+
+1. Lower third (persistent):
+   - Position: bottom-left corner, 12px padding
+   - Size: 32x32px
+   - Style: white outline on dark background
+   - Always visible during gesture mode
+
+2. Watermark (optional):
+   - Position: top-right corner, 8px padding
+   - Size: 24x24px, 30% opacity
+   - Style: subtle, doesn't interfere with data
+```
+
+#### Skeleton Rendering Style
+
+```
+Keypoint rendering:
+  - Detected joints: teal circles (#00d4aa), radius 6px
+  - Low-confidence joints: gray circles (#666), radius 4px
+  - Active hand (gesturing): yellow highlight (#ffcc00), radius 8px, glow effect
+
+Bone rendering:
+  - Normal bones: teal lines (#00d4aa), 2px stroke
+  - Active arm (gesturing): yellow lines (#ffcc00), 3px stroke, glow
+  - Torso: slightly thicker (3px) to anchor the skeleton visually
+
+Style: dark-theme friendly, high contrast against camera feed
 ```
 
 **Cursor types:**
-- **Open hand** (🖐) — tracking, ready for gesture
-- **Pointing** (👆) — hovering over data point
-- **Grabbing** (✊) — dragging / selected
-- **Pinching** (🤏) — zooming
-- **Ghost cursor** — CSI-only mode (lower opacity, larger radius)
+- **Open hand** — teal ring around wrist, rays extending from fingers
+- **Pointing** — teal ray from index finger toward chart
+- **Grabbing** — yellow fist icon, chart border highlights
+- **Pinching** — two teal dots (thumb + index) with distance line
+- **Ghost cursor** — CSI-only mode: larger, more diffuse circle (no finger detail)
 
 ### Data Flow Protocol
 
